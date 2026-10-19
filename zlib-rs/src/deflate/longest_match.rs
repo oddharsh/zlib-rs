@@ -29,7 +29,7 @@ fn longest_match_help<const SLOW: bool>(
     let limit_base: Pos;
     let early_exit: bool;
 
-    let mut chain_length: u16;
+    let mut chain_length: usize;
     let mut best_len: usize;
 
     let lookahead = state.lookahead;
@@ -73,7 +73,7 @@ fn longest_match_help<const SLOW: bool>(
     let mut mbase_end = window[offset..].as_ptr();
 
     // Don't waste too much time by following a chain if we already have a good match
-    chain_length = state.max_chain_length;
+    chain_length = state.max_chain_length as usize;
     if best_len >= state.good_match as usize {
         chain_length >>= 2;
     }
