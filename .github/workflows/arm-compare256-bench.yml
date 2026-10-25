@@ -11,7 +11,7 @@ permissions:
 jobs:
   bench:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - name: Checkout sources
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -37,39 +37,31 @@ jobs:
           sudo sysctl -w kernel.perf_event_paranoid=-1 || true
           perf stat -e cycles,instructions true || true
 
-      - name: Prepare base and head trees
+      - name: Prepare trees
         run: |
-          mkdir -p ../base ../head
-          git archive HEAD | tar -x -C ../base
-          git archive HEAD | tar -x -C ../head
-          (cd ../head && git apply bench/compare256.patch)
-          diff -q ../base/zlib-rs/src/deflate/compare256.rs ../head/zlib-rs/src/deflate/compare256.rs || true
+          for t in main narrow pin stack; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
+          for t in narrow pin stack; do (cd ../$t && git apply bench/$t.patch); done
 
-      - name: Build (as bench.yml does)
+      - name: Build every tree under 6 metadata hashes (as bench.yml does)
         env:
           RUSTFLAGS: "-Cllvm-args=-enable-dfa-jump-thread"
         run: |
-          for t in base head; do
-            (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t cargo build -p test-libz-rs-sys --release --examples)
-            (cd ../$t && CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-C cargo build -p test-libz-rs-sys --release --examples)
+          mkdir -p ../bin
+          for t in main narrow pin stack; do
+            for h in h0 h1 h2 h3 h4 h5; do
+              if [ $h = h0 ]; then unset __CARGO_DEFAULT_LIB_METADATA; else export __CARGO_DEFAULT_LIB_METADATA=$h; fi
+              (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-$h cargo build -q -p test-libz-rs-sys --release --example blogpost-compress)
+              cp ../target-$t-$h/release/examples/blogpost-compress ../bin/blogpost-$t-$h
+            done
           done
-          for L in "" "-C"; do
-            cp ../target-base$L/release/examples/blogpost-compress ../blogpost-base$L
-            cp ../target-base$L/release/examples/blogpost-compress ../blogpost-ctl$L
-            cp ../target-head$L/release/examples/blogpost-compress ../blogpost-head$L
-          done
-          sha256sum ../blogpost-*
+          unset __CARGO_DEFAULT_LIB_METADATA
+          sha256sum ../bin/* | sort
 
-      - name: Which functions changed (normalized disassembly)
+      - name: Codegen classes (normalized disassembly vs main-h0)
         run: |
-          for L in "" "-C"; do
-            echo "== layout${L:-A} base vs ctl (control)"
-            python3 bench/fndiff.py ../blogpost-base$L ../blogpost-ctl$L
-            echo "== layout${L:-A} base vs head"
-            python3 bench/fndiff.py ../blogpost-base$L ../blogpost-head$L | tee -a "$GITHUB_STEP_SUMMARY"
-          done
-          echo "== base layout A vs base codegen-units=1 (how much CGU=1 moves base itself)"
-          python3 bench/fndiff.py ../blogpost-base ../blogpost-base-C | head -5
+          for b in ../bin/blogpost-*; do
+            echo "== $(basename $b): $(python3 bench/fndiff.py ../bin/blogpost-main-h0 $b | head -1)"
+          done | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Corpus
         run: |
@@ -78,29 +70,14 @@ jobs:
           cp silesia-small.tar ../corpus/
           T=test-libz-rs-sys/src/test-data
           cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
-          ls -la ../corpus
 
-      - name: Run, layout A (bench.yml flags)
-        env:
-          BASE: ${{ github.workspace }}/../blogpost-base
-          CTL: ${{ github.workspace }}/../blogpost-ctl
-          HEAD: ${{ github.workspace }}/../blogpost-head
+      - name: Run all 24 builds interleaved
         run: |
           cd ../corpus
-          echo "## Layout A" >> "$GITHUB_STEP_SUMMARY"
-          python3 "$GITHUB_WORKSPACE/bench/run.py" 25 1,6,9 ./*
-          echo "----- results-A.csv -----"
-          cat results.csv
-          mv results.csv ../results-A.csv
+          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 8 1,6,9 ../spread.csv ../bin ./*
 
-      - name: Run, codegen-units=1
-        env:
-          BASE: ${{ github.workspace }}/../blogpost-base-C
-          CTL: ${{ github.workspace }}/../blogpost-ctl-C
-          HEAD: ${{ github.workspace }}/../blogpost-head-C
+      - name: Judge against main's hash spread
         run: |
-          cd ../corpus
-          echo "## codegen-units=1" >> "$GITHUB_STEP_SUMMARY"
-          python3 "$GITHUB_WORKSPACE/bench/run.py" 20 1,6,9 ./*
-          echo "----- results-C.csv -----"
-          cat results.csv
+          python3 bench/spread.py judge ../spread.csv | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "----- spread.csv -----"
+          cat ../spread.csv

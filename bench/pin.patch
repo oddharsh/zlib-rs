@@ -1,0 +1,17 @@
+diff --git a/zlib-rs/src/deflate/longest_match.rs b/zlib-rs/src/deflate/longest_match.rs
+index fb37f91..92ae26e 100644
+--- a/zlib-rs/src/deflate/longest_match.rs
++++ b/zlib-rs/src/deflate/longest_match.rs
+@@ -8,10 +8,12 @@ pub fn longest_match(state: &crate::deflate::State, cur_match: u16) -> (usize, u
+     longest_match_help::<false>(state, cur_match)
+ }
+ 
++#[inline]
+ pub fn longest_match_slow(state: &crate::deflate::State, cur_match: u16) -> (usize, u16) {
+     longest_match_help::<true>(state, cur_match)
+ }
+ 
++#[inline]
+ fn longest_match_help<const SLOW: bool>(
+     state: &crate::deflate::State,
+     mut cur_match: u16,
