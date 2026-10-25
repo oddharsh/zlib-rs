@@ -1,0 +1,47 @@
+diff --git a/zlib-rs/src/deflate/compare256.rs b/zlib-rs/src/deflate/compare256.rs
+index f4bcfc4..428e79d 100644
+--- a/zlib-rs/src/deflate/compare256.rs
++++ b/zlib-rs/src/deflate/compare256.rs
+@@ -118,8 +118,9 @@ mod rust {
+ #[cfg(target_arch = "aarch64")]
+ mod neon {
+     use core::arch::aarch64::{
+-        uint8x16x4_t, vceqq_u8, vget_lane_u64, vld4q_u8, vreinterpret_u64_u8, vreinterpretq_u16_u8,
+-        vrev16q_u8, vshrn_n_u16, vsriq_n_u8,
++        uint8x16x4_t, vceqq_u8, veorq_u8, vget_lane_u64, vgetq_lane_u64, vld1q_u8, vld4q_u8,
++        vreinterpret_u64_u8, vreinterpretq_u16_u8, vreinterpretq_u64_u8, vrev16q_u8, vshrn_n_u16,
++        vsriq_n_u8,
+     };
+ 
+     /// # Safety
+@@ -127,6 +128,30 @@ mod neon {
+     /// Behavior is undefined if the `neon` target feature is not enabled
+     #[target_feature(enable = "neon")]
+     pub unsafe fn compare256(src0: &[u8; 256], src1: &[u8; 256]) -> usize {
++        // Like the avx512 version, a 16 byte round first reduces the penalty for short matches.
++        unsafe {
++            // Nonzero bytes mark a mismatch.
++            let cmp =
++                vreinterpretq_u64_u8(veorq_u8(vld1q_u8(src0.as_ptr()), vld1q_u8(src1.as_ptr())));
++
++            // On big-endian, lane 1 holds the first 8 bytes, most significant byte first.
++            let (first, second) = if cfg!(target_endian = "big") {
++                (vgetq_lane_u64::<1>(cmp), vgetq_lane_u64::<0>(cmp))
++            } else {
++                (vgetq_lane_u64::<0>(cmp), vgetq_lane_u64::<1>(cmp))
++            };
++
++            let first = first.to_le();
++            if first != 0 {
++                return (first.trailing_zeros() / 8) as usize;
++            }
++
++            let second = second.to_le();
++            if second != 0 {
++                return 8 + (second.trailing_zeros() / 8) as usize;
++            }
++        }
++
+         type Chunk = uint8x16x4_t;
+         let src0 = src0.chunks_exact(core::mem::size_of::<Chunk>());
+         let src1 = src1.chunks_exact(core::mem::size_of::<Chunk>());

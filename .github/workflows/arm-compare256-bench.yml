@@ -1,0 +1,78 @@
+name: arm compare256 bench (one-off)
+
+on:
+  push:
+    branches:
+      - bench/arm-runner-compare256
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@be73d7920c329f220ce78e0234b8f96b7ae60248
+        with:
+          toolchain: "1.99.0"
+
+      - name: Machine
+        run: |
+          lscpu
+          nproc
+          uname -a
+
+      - name: Try to enable perf counters
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "linux-tools-$(uname -r)" linux-tools-generic || true
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          perf stat -e cycles,instructions true || true
+
+      - name: Prepare base and head trees
+        run: |
+          mkdir -p ../base ../head
+          git archive HEAD | tar -x -C ../base
+          git archive HEAD | tar -x -C ../head
+          (cd ../head && git apply bench/compare256.patch)
+          diff -q ../base/zlib-rs/src/deflate/compare256.rs ../head/zlib-rs/src/deflate/compare256.rs || true
+
+      - name: Build (as bench.yml does)
+        env:
+          RUSTFLAGS: "-Cllvm-args=-enable-dfa-jump-thread"
+        run: |
+          for t in base head; do
+            (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t cargo build -p test-libz-rs-sys --release --examples)
+          done
+          cp ../target-base/release/examples/blogpost-compress ../blogpost-base
+          cp ../target-base/release/examples/blogpost-compress ../blogpost-ctl
+          cp ../target-head/release/examples/blogpost-compress ../blogpost-head
+          sha256sum ../blogpost-*
+
+      - name: Corpus
+        run: |
+          mkdir -p ../corpus
+          tar -xf silesia-small.tar -C ../corpus --strip-components=1
+          cp silesia-small.tar ../corpus/
+          T=test-libz-rs-sys/src/test-data
+          cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
+          ls -la ../corpus
+
+      - name: Run
+        env:
+          BASE: ${{ github.workspace }}/../blogpost-base
+          CTL: ${{ github.workspace }}/../blogpost-ctl
+          HEAD: ${{ github.workspace }}/../blogpost-head
+        run: |
+          cd ../corpus
+          python3 "$GITHUB_WORKSPACE/bench/run.py" 25 1,6,9 ./*
+          echo "----- results.csv -----"
+          cat results.csv
