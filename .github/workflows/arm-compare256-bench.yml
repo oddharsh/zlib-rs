@@ -39,15 +39,15 @@ jobs:
 
       - name: Prepare trees
         run: |
-          for t in main narrow pin stack; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
-          for t in narrow pin stack; do (cd ../$t && git apply bench/$t.patch); done
+          for t in main stack; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
+          (cd ../stack && git apply bench/stack.patch)
 
       - name: Build every tree under 6 metadata hashes (as bench.yml does)
         env:
           RUSTFLAGS: "-Cllvm-args=-enable-dfa-jump-thread"
         run: |
           mkdir -p ../bin
-          for t in main narrow pin stack; do
+          for t in main stack; do
             for h in h0 h1 h2 h3 h4 h5; do
               if [ $h = h0 ]; then unset __CARGO_DEFAULT_LIB_METADATA; else export __CARGO_DEFAULT_LIB_METADATA=$h; fi
               (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-$h cargo build -q -p test-libz-rs-sys --release --example blogpost-compress)
@@ -71,10 +71,10 @@ jobs:
           T=test-libz-rs-sys/src/test-data
           cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
 
-      - name: Run all 24 builds interleaved
+      - name: Run all 12 builds interleaved, levels 0-9
         run: |
           cd ../corpus
-          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 8 1,6,9 ../spread.csv ../bin ./*
+          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 6 0,1,2,3,4,5,6,7,8,9 ../spread.csv ../bin ./*
 
       - name: Judge against main's hash spread
         run: |
