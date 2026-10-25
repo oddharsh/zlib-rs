@@ -51,14 +51,25 @@ jobs:
         run: |
           for t in base head; do
             (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t cargo build -p test-libz-rs-sys --release --examples)
-            (cd ../$t && RUSTFLAGS="$RUSTFLAGS -Cllvm-args=-align-loops=64" CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-B cargo build -p test-libz-rs-sys --release --examples)
+            (cd ../$t && CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-C cargo build -p test-libz-rs-sys --release --examples)
           done
-          for L in "" "-B"; do
+          for L in "" "-C"; do
             cp ../target-base$L/release/examples/blogpost-compress ../blogpost-base$L
             cp ../target-base$L/release/examples/blogpost-compress ../blogpost-ctl$L
             cp ../target-head$L/release/examples/blogpost-compress ../blogpost-head$L
           done
           sha256sum ../blogpost-*
+
+      - name: Which functions changed (normalized disassembly)
+        run: |
+          for L in "" "-C"; do
+            echo "== layout${L:-A} base vs ctl (control)"
+            python3 bench/fndiff.py ../blogpost-base$L ../blogpost-ctl$L
+            echo "== layout${L:-A} base vs head"
+            python3 bench/fndiff.py ../blogpost-base$L ../blogpost-head$L | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          echo "== base layout A vs base codegen-units=1 (how much CGU=1 moves base itself)"
+          python3 bench/fndiff.py ../blogpost-base ../blogpost-base-C | head -5
 
       - name: Corpus
         run: |
@@ -82,14 +93,14 @@ jobs:
           cat results.csv
           mv results.csv ../results-A.csv
 
-      - name: Run, layout B (-align-loops=64)
+      - name: Run, codegen-units=1
         env:
-          BASE: ${{ github.workspace }}/../blogpost-base-B
-          CTL: ${{ github.workspace }}/../blogpost-ctl-B
-          HEAD: ${{ github.workspace }}/../blogpost-head-B
+          BASE: ${{ github.workspace }}/../blogpost-base-C
+          CTL: ${{ github.workspace }}/../blogpost-ctl-C
+          HEAD: ${{ github.workspace }}/../blogpost-head-C
         run: |
           cd ../corpus
-          echo "## Layout B" >> "$GITHUB_STEP_SUMMARY"
+          echo "## codegen-units=1" >> "$GITHUB_STEP_SUMMARY"
           python3 "$GITHUB_WORKSPACE/bench/run.py" 20 1,6,9 ./*
-          echo "----- results-B.csv -----"
+          echo "----- results-C.csv -----"
           cat results.csv
