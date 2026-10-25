@@ -71,10 +71,10 @@ jobs:
           T=test-libz-rs-sys/src/test-data
           cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
 
-      - name: Run all 12 builds interleaved, levels 0-9
+      - name: Rerun 4 cells x levels 0 and 5, 30 rounds (precommitted)
         run: |
           cd ../corpus
-          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 6 0,1,2,3,4,5,6,7,8,9 ../spread.csv ../bin ./*
+          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 30 0,5 ../spread.csv ../bin ./gix-blame-readme.bin ./nci ./osdb ./silesia-small.tar
 
       - name: Judge against main's hash spread
         run: |
