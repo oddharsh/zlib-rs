@@ -11,7 +11,7 @@ permissions:
 jobs:
   bench:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Checkout sources
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -51,10 +51,13 @@ jobs:
         run: |
           for t in base head; do
             (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t cargo build -p test-libz-rs-sys --release --examples)
+            (cd ../$t && RUSTFLAGS="$RUSTFLAGS -Cllvm-args=-align-loops=64" CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-B cargo build -p test-libz-rs-sys --release --examples)
           done
-          cp ../target-base/release/examples/blogpost-compress ../blogpost-base
-          cp ../target-base/release/examples/blogpost-compress ../blogpost-ctl
-          cp ../target-head/release/examples/blogpost-compress ../blogpost-head
+          for L in "" "-B"; do
+            cp ../target-base$L/release/examples/blogpost-compress ../blogpost-base$L
+            cp ../target-base$L/release/examples/blogpost-compress ../blogpost-ctl$L
+            cp ../target-head$L/release/examples/blogpost-compress ../blogpost-head$L
+          done
           sha256sum ../blogpost-*
 
       - name: Corpus
@@ -66,13 +69,27 @@ jobs:
           cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
           ls -la ../corpus
 
-      - name: Run
+      - name: Run, layout A (bench.yml flags)
         env:
           BASE: ${{ github.workspace }}/../blogpost-base
           CTL: ${{ github.workspace }}/../blogpost-ctl
           HEAD: ${{ github.workspace }}/../blogpost-head
         run: |
           cd ../corpus
+          echo "## Layout A" >> "$GITHUB_STEP_SUMMARY"
           python3 "$GITHUB_WORKSPACE/bench/run.py" 25 1,6,9 ./*
-          echo "----- results.csv -----"
+          echo "----- results-A.csv -----"
+          cat results.csv
+          mv results.csv ../results-A.csv
+
+      - name: Run, layout B (-align-loops=64)
+        env:
+          BASE: ${{ github.workspace }}/../blogpost-base-B
+          CTL: ${{ github.workspace }}/../blogpost-ctl-B
+          HEAD: ${{ github.workspace }}/../blogpost-head-B
+        run: |
+          cd ../corpus
+          echo "## Layout B" >> "$GITHUB_STEP_SUMMARY"
+          python3 "$GITHUB_WORKSPACE/bench/run.py" 20 1,6,9 ./*
+          echo "----- results-B.csv -----"
           cat results.csv
