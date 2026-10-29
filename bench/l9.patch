@@ -1,0 +1,83 @@
+diff --git a/zlib-rs/src/deflate/algorithm/quick.rs b/zlib-rs/src/deflate/algorithm/quick.rs
+index 4c2650d..e1dac7b 100644
+--- a/zlib-rs/src/deflate/algorithm/quick.rs
++++ b/zlib-rs/src/deflate/algorithm/quick.rs
+@@ -111,7 +111,7 @@ pub fn deflate_quick(stream: &mut DeflateStream, flush: DeflateFlush) -> BlockSt
+                 let match_start = &state.window.filled()[hash_head as usize..];
+ 
+                 if str_val == first_four_bytes!(match_start, 0) {
+-                    let mut match_len = crate::deflate::compare256::compare256_slice(
++                    let mut match_len = crate::deflate::compare256::compare256_quick_slice(
+                         &state.window.filled()[state.strstart + 2..],
+                         &match_start[2..],
+                     ) + 2;
+diff --git a/zlib-rs/src/deflate/compare256.rs b/zlib-rs/src/deflate/compare256.rs
+index f4bcfc4..dcaa7fd 100644
+--- a/zlib-rs/src/deflate/compare256.rs
++++ b/zlib-rs/src/deflate/compare256.rs
+@@ -8,6 +8,27 @@ pub fn compare256_slice(src0: &[u8], src1: &[u8]) -> usize {
+     compare256(src0, src1)
+ }
+ 
++/// `compare256_slice` for `deflate_quick`, which finds many short matches.
++#[inline]
++pub fn compare256_quick_slice(src0: &[u8], src1: &[u8]) -> usize {
++    let src0 = first_chunk::<_, 256>(src0).unwrap();
++    let src1 = first_chunk::<_, 256>(src1).unwrap();
++
++    // `neon::compare256` only returns after comparing 64 bytes, so check the first 16 here.
++    #[cfg(target_arch = "aarch64")]
++    {
++        let a = u128::from_le_bytes(*first_chunk(src0).unwrap());
++        let b = u128::from_le_bytes(*first_chunk(src1).unwrap());
++
++        let diff = a ^ b;
++        if diff != 0 {
++            return (diff.trailing_zeros() / 8) as usize;
++        }
++    }
++
++    compare256(src0, src1)
++}
++
+ fn compare256(src0: &[u8; 256], src1: &[u8; 256]) -> usize {
+     #[cfg(feature = "avx512")]
+     #[cfg(target_arch = "x86_64")]
+@@ -95,6 +116,7 @@ mod rust {
+ 
+             let match_len = compare256(&str1, &str2);
+             assert_eq!(match_len, i);
++            assert_eq!(super::compare256_quick_slice(&str1, &str2), i);
+ 
+             str2[i] = b'a';
+         }
+diff --git a/zlib-rs/src/deflate/longest_match.rs b/zlib-rs/src/deflate/longest_match.rs
+index fb37f91..2138bc6 100644
+--- a/zlib-rs/src/deflate/longest_match.rs
++++ b/zlib-rs/src/deflate/longest_match.rs
+@@ -8,10 +8,12 @@ pub fn longest_match(state: &crate::deflate::State, cur_match: u16) -> (usize, u
+     longest_match_help::<false>(state, cur_match)
+ }
+ 
++#[inline]
+ pub fn longest_match_slow(state: &crate::deflate::State, cur_match: u16) -> (usize, u16) {
+     longest_match_help::<true>(state, cur_match)
+ }
+ 
++#[inline]
+ fn longest_match_help<const SLOW: bool>(
+     state: &crate::deflate::State,
+     mut cur_match: u16,
+@@ -245,7 +247,11 @@ fn longest_match_help<const SLOW: bool>(
+                     )
+                 };
+ 
+-                crate::deflate::compare256::compare256_slice(&scan[2..], src1) + 2
++                if SLOW {
++                    crate::deflate::compare256::compare256_quick_slice(&scan[2..], src1) + 2
++                } else {
++                    crate::deflate::compare256::compare256_slice(&scan[2..], src1) + 2
++                }
+             };
+         }
+ 
