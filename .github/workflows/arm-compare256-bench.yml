@@ -39,15 +39,16 @@ jobs:
 
       - name: Prepare trees
         run: |
-          for t in main stack; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
+          for t in main stack all; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
           (cd ../stack && git apply bench/stack.patch)
+          (cd ../all && git apply bench/all.patch)
 
       - name: Build every tree under 6 metadata hashes (as bench.yml does)
         env:
           RUSTFLAGS: "-Cllvm-args=-enable-dfa-jump-thread"
         run: |
           mkdir -p ../bin
-          for t in main stack; do
+          for t in main stack all; do
             for h in h0 h1 h2 h3 h4 h5; do
               if [ $h = h0 ]; then unset __CARGO_DEFAULT_LIB_METADATA; else export __CARGO_DEFAULT_LIB_METADATA=$h; fi
               (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-$h cargo build -q -p test-libz-rs-sys --release --example blogpost-compress)
@@ -63,6 +64,12 @@ jobs:
             echo "== $(basename $b): $(python3 bench/fndiff.py ../bin/blogpost-main-h0 $b | head -1)"
           done | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: What all changes vs stack, per hash (normalized)
+        run: |
+          for h in h0 h1 h2 h3 h4 h5; do
+            echo "== $h"; python3 bench/fndiff.py ../bin/blogpost-stack-$h ../bin/blogpost-all-$h
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Corpus
         run: |
           mkdir -p ../corpus
@@ -71,10 +78,10 @@ jobs:
           T=test-libz-rs-sys/src/test-data
           cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
 
-      - name: Rerun 4 cells x levels 0 and 5, 30 rounds (precommitted)
+      - name: Run all 18 builds interleaved, levels 0-9, 10 rounds
         run: |
           cd ../corpus
-          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 30 0,5 ../spread.csv ../bin ./gix-blame-readme.bin ./nci ./osdb ./silesia-small.tar
+          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 10 0,1,2,3,4,5,6,7,8,9 ../spread.csv ../bin ./*
 
       - name: Judge against main's hash spread
         run: |
