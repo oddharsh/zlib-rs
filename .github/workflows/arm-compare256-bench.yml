@@ -9,9 +9,13 @@ permissions:
   contents: read
 
 jobs:
-  bench:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
+  codegen:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - name: Checkout sources
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -25,65 +29,33 @@ jobs:
 
       - name: Machine
         run: |
-          lscpu
-          nproc
-          uname -a
+          lscpu | grep 'Model name'
+          uname -m
 
-      - name: Try to enable perf counters
-        continue-on-error: true
+      - name: Prepare trees (main 7909c0f, old 83f752b, gated 426d254)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq "linux-tools-$(uname -r)" linux-tools-generic || true
-          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
-          perf stat -e cycles,instructions true || true
-
-      - name: Prepare trees
-        run: |
-          for t in main stack; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
-          (cd ../stack && git apply bench/head.patch)
+          for t in main old gated; do mkdir -p ../$t; git archive HEAD | tar -x -C ../$t; done
+          (cd ../old && git apply bench/head.patch)
+          (cd ../gated && git apply bench/gated.patch)
 
       - name: Build every tree under 6 metadata hashes (as bench.yml does)
         env:
           RUSTFLAGS: "-Cllvm-args=-enable-dfa-jump-thread"
         run: |
           mkdir -p ../bin
-          for t in main stack; do
+          for t in main old gated; do
             for h in h0 h1 h2 h3 h4 h5; do
               if [ $h = h0 ]; then unset __CARGO_DEFAULT_LIB_METADATA; else export __CARGO_DEFAULT_LIB_METADATA=$h; fi
               (cd ../$t && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/../target-$t-$h cargo build -q -p test-libz-rs-sys --release --example blogpost-compress)
               cp ../target-$t-$h/release/examples/blogpost-compress ../bin/blogpost-$t-$h
             done
           done
-          unset __CARGO_DEFAULT_LIB_METADATA
-          sha256sum ../bin/* | sort
 
-      - name: Codegen classes (normalized disassembly vs main-h0)
-        run: |
-          for b in ../bin/blogpost-*; do
-            echo "== $(basename $b): $(python3 bench/fndiff.py ../bin/blogpost-main-h0 $b | head -1)"
-          done | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: What 83f752b changes vs main, per hash (normalized)
+      - name: Normalized codegen diffs per hash
         run: |
           for h in h0 h1 h2 h3 h4 h5; do
-            echo "== $h"; python3 bench/fndiff.py ../bin/blogpost-main-$h ../bin/blogpost-stack-$h
+            echo "== $h gated vs main: $(python3 bench/fndiff.py ../bin/blogpost-main-$h ../bin/blogpost-gated-$h | head -1)"
+            echo "== $h gated vs old:  $(python3 bench/fndiff.py ../bin/blogpost-old-$h ../bin/blogpost-gated-$h | head -1)"
+            echo "== $h old vs main (control): $(python3 bench/fndiff.py ../bin/blogpost-main-$h ../bin/blogpost-old-$h | head -1)"
           done | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Corpus
-        run: |
-          mkdir -p ../corpus
-          tar -xf silesia-small.tar -C ../corpus --strip-components=1
-          cp silesia-small.tar ../corpus/
-          T=test-libz-rs-sys/src/test-data
-          cp $T/lcet10.txt $T/paper-100k.pdf $T/fireworks.jpg $T/gix-blame-readme.bin ../corpus/
-
-      - name: Run all 12 builds interleaved (x86_64), levels 0-9, 10 rounds
-        run: |
-          cd ../corpus
-          python3 "$GITHUB_WORKSPACE/bench/spread.py" run 10 0,1,2,3,4,5,6,7,8,9 ../spread.csv ../bin ./*
-
-      - name: Judge against main's hash spread
-        run: |
-          python3 bench/spread.py judge ../spread.csv | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "----- spread.csv -----"
-          cat ../spread.csv
+          echo "== control: main h0 vs h1: $(python3 bench/fndiff.py ../bin/blogpost-main-h0 ../bin/blogpost-main-h1 | head -1)" | tee -a "$GITHUB_STEP_SUMMARY"
